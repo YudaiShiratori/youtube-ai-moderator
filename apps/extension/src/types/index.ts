@@ -27,7 +27,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
-  displayMode: 'hide',
+  displayMode: 'blur',  // テスト用にblurに変更
   ngKeywords: [],
   ngUsers: [],
   categorySettings: {

@@ -10,6 +10,19 @@ class YouTubeCommentModerator {
 
   async init() {
     console.log('[YouTube AI Moderator] Initializing...');
+    // TEST: 全コメント強制ぼかし用のグローバルスタイルを注入（後で削除）
+    const styleId = 'ycab-test-global-style';
+    if (!document.getElementById(styleId)) {
+      const s = document.createElement('style');
+      s.id = styleId;
+      s.textContent = `
+        ytd-comment-thread-renderer, ytd-comment-renderer { position: relative !important; }
+        ytd-comment-thread-renderer #content,
+        ytd-comment-renderer #content,
+        #content-text { filter: blur(8px) brightness(0.5) !important; }
+      `;
+      document.head.appendChild(s);
+    }
     await this.loadSettings();
     console.log('[YouTube AI Moderator] Settings loaded:', this.settings);
     this.setupObserver();
@@ -97,6 +110,19 @@ class YouTubeCommentModerator {
   }
 
   private async processComment(element: HTMLElement) {
+    // TEST: 全コメントを強制的にぼかす（後で戻す）
+    try {
+      const commentRoot = element.closest('ytd-comment-thread-renderer, ytd-comment-renderer') as HTMLElement | null;
+      const target = commentRoot ?? element;
+      target.classList.remove('ycab-hidden', 'ycab-blurred');
+      target.classList.add('ycab-blurred');
+      const textEl = target.querySelector('#content, #content-text, .ytd-comment-renderer #content-text') as HTMLElement | null;
+      if (textEl) textEl.classList.add('ycab-blurred');
+    } catch (e) {
+      console.warn('blur failed', e);
+    }
+    return;
+
     if (!this.settings?.enabled) return;
     if (detector.isProcessed(element)) return;
 

@@ -6,6 +6,10 @@ export default defineConfig({
   // ルート直下の entrypoints を利用
   srcDir: '.',
   entrypointsDir: 'entrypoints',
+  // dev でブラウザ起動時に YouTube を自動で開くと検証が楽
+  webExt: {
+    startUrls: ['https://www.youtube.com/watch?v=GalZ_oLq5NA&t=5293s'],
+  },
   manifest: {
     name: 'YouTube AI Moderator',
     description: 'YouTubeのコメントを自動的に検出してフィルタリングします',
@@ -15,21 +19,7 @@ export default defineConfig({
       'https://www.youtube.com/*',
       'https://www.youtube.com/live_chat*',
     ],
-    content_scripts: [
-      {
-        matches: ['https://www.youtube.com/*'],
-        js: ['src/content/index.ts'],
-        css: ['src/content/styles.css'],
-        run_at: 'document_idle',
-      },
-      {
-        matches: ['https://www.youtube.com/live_chat*'],
-        js: ['src/content/livechat.ts'],
-        css: ['src/content/styles.css'],
-        run_at: 'document_idle',
-        all_frames: true,
-      },
-    ],
+    // content_scripts は entrypoints/*.content.ts から自動生成
     action: {
       default_popup: 'entrypoints/popup.html',
       default_icon: {

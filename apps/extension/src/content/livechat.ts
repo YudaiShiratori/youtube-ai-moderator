@@ -15,11 +15,15 @@ class YouTubeLiveChatModerator {
   private chatContainer: Element | null = null;
 
   async init() {
-    // ライブチャットページでのみ動作
-    if (!window.location.href.includes('live_chat')) {
+    console.log('[YouTubeLiveChatModerator] Initializing...', window.location.href);
+    
+    // ライブチャットまたはアーカイブのライブチャットページでのみ動作
+    if (!window.location.href.includes('live_chat') && !window.location.href.includes('live_chat_replay')) {
+      console.log('[YouTubeLiveChatModerator] Not a live chat page, skipping');
       return;
     }
 
+    console.log('[YouTubeLiveChatModerator] Loading settings...');
     await this.loadSettings();
     this.setupListeners();
     this.waitForChatContainer();
@@ -27,6 +31,7 @@ class YouTubeLiveChatModerator {
 
   private async loadSettings() {
     this.settings = await storage.getSettings();
+    console.log('[YouTubeLiveChatModerator] Settings loaded:', this.settings);
   }
 
   private setupListeners() {
@@ -45,16 +50,34 @@ class YouTubeLiveChatModerator {
   }
 
   private waitForChatContainer() {
-    // ライブチャットコンテナの出現を待つ
+    console.log('[YouTubeLiveChatModerator] Waiting for chat container...');
+    let attempts = 0;
+    
+    // ライブチャットコンテナの出現を待つ（ライブとアーカイブ両対応）
     const checkContainer = () => {
-      this.chatContainer = document.querySelector('yt-live-chat-item-list-renderer #items');
+      attempts++;
+      
+      // ライブチャットとアーカイブのチャットで同じセレクタを使用
+      const liveContainer = document.querySelector('yt-live-chat-item-list-renderer #items');
+      const replayContainer = document.querySelector('yt-live-chat-replay-renderer #items');
+      
+      console.log(`[YouTubeLiveChatModerator] Attempt ${attempts}:`, {
+        liveContainer: !!liveContainer,
+        replayContainer: !!replayContainer,
+        allRenderers: document.querySelectorAll('[id="items"]').length
+      });
+      
+      this.chatContainer = liveContainer || replayContainer;
       
       if (this.chatContainer) {
+        console.log('[YouTubeLiveChatModerator] Chat container found!', this.chatContainer);
         this.setupObserver();
         this.processExistingMessages();
-      } else {
-        // 100ms後に再チェック
+      } else if (attempts < 100) {
+        // 100ms後に再チェック（最大10秒）
         setTimeout(checkContainer, 100);
+      } else {
+        console.log('[YouTubeLiveChatModerator] Chat container not found after 10 seconds');
       }
     };
 
@@ -64,12 +87,15 @@ class YouTubeLiveChatModerator {
   private setupObserver() {
     if (!this.chatContainer) return;
 
+    console.log('[YouTubeLiveChatModerator] Setting up observer...');
+    
     this.observer = new MutationObserver((mutations) => {
       if (this.isProcessing || !this.settings?.enabled) return;
       
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
           if (node instanceof HTMLElement && this.isLiveChatMessage(node)) {
+            console.log('[YouTubeLiveChatModerator] New message detected:', node.tagName);
             this.processMessage(node);
           }
         }
@@ -80,18 +106,26 @@ class YouTubeLiveChatModerator {
       childList: true,
       subtree: true,
     });
+    
+    console.log('[YouTubeLiveChatModerator] Observer started');
   }
 
   private isLiveChatMessage(element: HTMLElement): boolean {
+    // ライブチャットとリプレイの両方のメッセージタイプをチェック
     return element.tagName === 'YT-LIVE-CHAT-TEXT-MESSAGE-RENDERER' ||
-           element.querySelector('yt-live-chat-text-message-renderer') !== null;
+           element.tagName === 'YT-LIVE-CHAT-REPLAY-TEXT-MESSAGE-RENDERER' ||
+           element.querySelector('yt-live-chat-text-message-renderer') !== null ||
+           element.querySelector('yt-live-chat-replay-text-message-renderer') !== null;
   }
 
   private extractMessage(element: HTMLElement): { author: string; text: string } | null {
-    // ライブチャットのメッセージ構造から情報を抽出
+    // ライブチャットとリプレイのメッセージ構造から情報を抽出
     let messageElement = element;
-    if (element.tagName !== 'YT-LIVE-CHAT-TEXT-MESSAGE-RENDERER') {
-      messageElement = element.querySelector('yt-live-chat-text-message-renderer') || element;
+    if (element.tagName !== 'YT-LIVE-CHAT-TEXT-MESSAGE-RENDERER' && 
+        element.tagName !== 'YT-LIVE-CHAT-REPLAY-TEXT-MESSAGE-RENDERER') {
+      messageElement = element.querySelector('yt-live-chat-text-message-renderer') || 
+                       element.querySelector('yt-live-chat-replay-text-message-renderer') || 
+                       element;
     }
 
     // 著者名の取得
@@ -108,16 +142,30 @@ class YouTubeLiveChatModerator {
   }
 
   private async processMessage(element: HTMLElement) {
-    if (!this.settings?.enabled) return;
+    if (!this.settings?.enabled) {
+      console.log('[YouTubeLiveChatModerator] Settings not enabled');
+      return;
+    }
     if (liveChatDetector.isProcessed(element)) return;
 
     const message = this.extractMessage(element);
-    if (!message) return;
+    if (!message) {
+      console.log('[YouTubeLiveChatModerator] Could not extract message from:', element);
+      return;
+    }
 
+    console.log('[YouTubeLiveChatModerator] Processing message:', message);
     liveChatDetector.markProcessed(element);
 
+    // テスト用: 全メッセージにぼかしを適用
+    console.log('[YouTubeLiveChatModerator] TEST MODE: Applying blur to all messages');
+    this.applyAction(element, 'test');
+    return;
+
+    // 以下は通常の処理（テスト中は実行されない）
     // NGユーザーチェック
     if (this.settings.ngUsers.includes(message.author)) {
+      console.log('[YouTubeLiveChatModerator] NG user detected:', message.author);
       this.applyAction(element, 'nguser');
       return;
     }
@@ -128,16 +176,20 @@ class YouTubeLiveChatModerator {
     );
     
     if (hasNgKeyword) {
+      console.log('[YouTubeLiveChatModerator] NG keyword detected in:', message.text);
       this.applyAction(element, 'ngkeyword');
       return;
     }
 
     // ライブチャット専用検出
     const result = liveChatDetector.detect(message.text, message.author);
+    console.log('[YouTubeLiveChatModerator] Detection result:', result);
 
     if (result.blocked && result.category) {
       const catSettings = this.settings?.categorySettings[result.category];
+      console.log('[YouTubeLiveChatModerator] Category settings for', result.category, ':', catSettings);
       if (catSettings?.enabled) {
+        console.log('[YouTubeLiveChatModerator] Applying filter for category:', result.category);
         this.applyAction(element, result.category);
       }
     }
@@ -145,6 +197,8 @@ class YouTubeLiveChatModerator {
 
   private applyAction(element: HTMLElement, category: string) {
     if (!this.settings) return;
+    
+    console.log('[YouTubeLiveChatModerator] Applying action for category:', category, 'mode:', this.settings.displayMode);
 
     // 既存のクラスとバッジを削除
     element.classList.remove('ycab-hidden', 'ycab-blurred');
@@ -184,6 +238,7 @@ class YouTubeLiveChatModerator {
       strongTone: 'ライブ語気強',
       nguser: 'NGユーザー',
       ngkeyword: 'NGワード',
+      test: 'テスト',
     };
     return labels[category] || 'フィルター';
   }
@@ -192,7 +247,12 @@ class YouTubeLiveChatModerator {
     if (!this.chatContainer) return;
     
     this.isProcessing = true;
-    const messages = this.chatContainer.querySelectorAll('yt-live-chat-text-message-renderer');
+    // ライブチャットとリプレイの両方のメッセージを取得
+    const messages = this.chatContainer.querySelectorAll(
+      'yt-live-chat-text-message-renderer, yt-live-chat-replay-text-message-renderer'
+    );
+    
+    console.log(`[YouTubeLiveChatModerator] Processing ${messages.length} existing messages`);
     
     messages.forEach((element) => {
       if (element instanceof HTMLElement) {
@@ -201,6 +261,7 @@ class YouTubeLiveChatModerator {
     });
     
     this.isProcessing = false;
+    console.log('[YouTubeLiveChatModerator] Finished processing existing messages');
   }
 
   private reprocessAllMessages() {
