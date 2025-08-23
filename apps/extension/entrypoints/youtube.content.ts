@@ -8,7 +8,7 @@ export default defineContentScript({
   runAt: 'document_idle',
   cssInjectionMode: 'manifest',
   main() {
-    console.log('[YCAB] YouTube content script loading...');
+    console.error('[YCAB] YouTube content script loading...');
     import('../src/content/index.ts');
   },
 });

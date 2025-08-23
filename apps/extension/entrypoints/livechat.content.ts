@@ -11,7 +11,7 @@ export default defineContentScript({
   allFrames: true,
   cssInjectionMode: 'manifest',
   main() {
-    console.log('[YCAB] LiveChat content script loading...');
+    console.error('[YCAB] LiveChat content script loading...');
     import('../src/content/livechat.ts');
   },
 });

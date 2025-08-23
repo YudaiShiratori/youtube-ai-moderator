@@ -52,7 +52,7 @@ export class UnifiedCommentDetector {
     const normalized = this.normalizeText(text);
     
     // 笑い単独は通す
-    if (/^[wｗw草笑]*$/.test(normalized.replace(/[\s　]/g, ''))) {
+    if (/^[wｗw草笑]*$/.test(normalized.replace(/[\s ]/g, ''))) {
       return { blocked: false, category: null, reason: '' };
     }
 
@@ -162,7 +162,7 @@ export class UnifiedCommentDetector {
 
     // 顔文字・AA
     const emoticons = [
-      /\(´∀｀\)/, /\(・∀・\)/, /\(｀・ω・´\)/, /\(´・ω・`\)/, /\(　ﾟ∀ﾟ\)/,
+      /\(´∀｀\)/, /\(・∀・\)/, /\(｀・ω・´\)/, /\(´・ω・`\)/, /\( ﾟ∀ﾟ\)/,
       /\^q\^/, /\^p\^/, /\(^o^\)/, /\(>_<\)/, /\(≧∀≦\)/,
       /ω/, /σ/, /φ/, /※/, /∩/, /∪/, /※/
     ];
@@ -681,7 +681,7 @@ export class UnifiedCommentDetector {
     // A3. 重大事実の断定
     const majorSpoilerTerms = ['死ぬ', '死んだ', '殺される', '裏切る', '裏切った', '正体', '犯人', '黒幕', '真犯人'];
     const hasMajorSpoiler = majorSpoilerTerms.some(term => text.includes(term));
-    if (hasMajorSpoiler && overallTone !== 'reaction') {
+    if (hasMajorSpoiler && overallTone === 'factual') {
       score += 2;
       reasons.push('重大事実');
     }

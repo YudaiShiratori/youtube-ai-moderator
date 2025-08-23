@@ -71,7 +71,7 @@ function App() {
           <div className="info-row">
             <span className="info-label">表示モード:</span>
             <span className="info-value">
-              {settings?.displayMode === 'hide' ? '非表示' : 'ぼかし'}
+              {'ぼかし'}
             </span>
           </div>
           <div className="info-row">

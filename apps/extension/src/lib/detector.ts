@@ -52,7 +52,7 @@ class StrictCommentDetector {
    */
   private extractSkeleton(text: string): string {
     // スペース/記号/絵文字/中点等を削除して骨格抽出
-    return text.replace(/[\s\-_\.\u30FB\u2022\u2023\u25CF\u25CB\u25A0\u25A1]{1,2}/g, '');
+    return text.replace(/[\s\-_.\u30FB\u2022\u2023\u25CF\u25CB\u25A0\u25A1]{1,2}/g, '');
   }
 
   /**
@@ -247,7 +247,7 @@ class StrictCommentDetector {
     // 変形URL検出
     const obfuscatedUrls = ['hxxps', 't[.]me', 'lin[.]ee', 'd i s c o r d', 'ｗｈａｔｓａｐｐ'];
     for (const obf of obfuscatedUrls) {
-      if (skeleton.includes(obf.replace(/[\[\]\s\.]/g, ''))) {
+      if (skeleton.includes(obf.replace(/[[\]\s.]/g, ''))) {
         return { blocked: true, category: 'recruiting', reason: `変形URL「${obf}」` };
       }
     }

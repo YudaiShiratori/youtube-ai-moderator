@@ -1,4 +1,4 @@
-export type Category = 'spoiler' | 'hint' | 'hato' | 'backseat';
+export type Category = 'spoiler' | 'hint' | 'hato' | 'backseat' | 'harassment' | 'recruiting' | 'repeat' | 'impersonation' | 'noise' | 'nioase' | 'strongTone';
 
 export type DisplayMode = 'blur';
 
@@ -35,5 +35,12 @@ export const DEFAULT_SETTINGS: Settings = {
     hint: { enabled: true },
     hato: { enabled: true },
     backseat: { enabled: true },
+    harassment: { enabled: true },
+    recruiting: { enabled: true },
+    repeat: { enabled: true },
+    impersonation: { enabled: true },
+    noise: { enabled: true },
+    nioase: { enabled: true },
+    strongTone: { enabled: true },
   },
 };

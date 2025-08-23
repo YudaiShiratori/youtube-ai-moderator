@@ -15,15 +15,15 @@ class YouTubeLiveChatModerator {
   private chatContainer: Element | null = null;
 
   async init() {
-    console.log('[YCAB] LiveChat init called, URL:', window.location.href);
+    // Debug: LiveChat init called
     
     // ライブチャットまたはアーカイブのライブチャットページでのみ動作
     if (!window.location.href.includes('live_chat') && !window.location.href.includes('live_chat_replay')) {
-      console.log('[YCAB] Not a live chat page, skipping');
+      // Not a live chat page
       return;
     }
 
-    console.log('[YCAB] Live chat page detected');
+    // Live chat page detected
     await this.loadSettings();
     this.setupListeners();
     this.waitForChatContainer();
@@ -49,7 +49,7 @@ class YouTubeLiveChatModerator {
   }
 
   private waitForChatContainer() {
-    console.log('[YCAB] Waiting for chat container...');
+    // Waiting for chat container
     // ライブチャットコンテナの出現を待つ（ライブとアーカイブ両対応）
     const checkContainer = () => {
       // ライブチャットとアーカイブのチャットで同じセレクタを使用
@@ -57,11 +57,11 @@ class YouTubeLiveChatModerator {
                           document.querySelector('yt-live-chat-replay-renderer #items');
       
       if (this.chatContainer) {
-        console.log('[YCAB] Chat container found:', this.chatContainer);
+        // Chat container found
         this.setupObserver();
         this.processExistingMessages();
       } else {
-        console.log('[YCAB] Chat container not found, retrying...');
+        // Chat container not found, retrying
         // 100ms後に再チェック
         setTimeout(checkContainer, 100);
       }
@@ -187,7 +187,7 @@ class YouTubeLiveChatModerator {
 
   private addClickToUnblur(element: HTMLElement) {
     // 既存のイベントリスナーを削除
-    const existingListener = (element as any)._ycabClickListener;
+    const existingListener = (element as HTMLElement & { _ycabClickListener?: EventListener })._ycabClickListener;
     if (existingListener) {
       element.removeEventListener('click', existingListener);
     }
@@ -223,7 +223,7 @@ class YouTubeLiveChatModerator {
     };
 
     element.addEventListener('click', clickListener);
-    (element as any)._ycabClickListener = clickListener;
+    (element as HTMLElement & { _ycabClickListener?: EventListener })._ycabClickListener = clickListener;
   }
 
   private getCategoryLabel(category: string): string {
@@ -270,10 +270,10 @@ class YouTubeLiveChatModerator {
       if (overlay) overlay.remove();
       
       // イベントリスナーを削除
-      const existingListener = (element as any)._ycabClickListener;
+      const existingListener = (element as HTMLElement & { _ycabClickListener?: EventListener })._ycabClickListener;
       if (existingListener) {
         element.removeEventListener('click', existingListener);
-        delete (element as any)._ycabClickListener;
+        delete (element as HTMLElement & { _ycabClickListener?: EventListener })._ycabClickListener;
       }
     });
 
@@ -287,6 +287,6 @@ class YouTubeLiveChatModerator {
 }
 
 // ライブチャットページでのみ初期化
-console.log('[YCAB] LiveChat script loaded!', window.location.href);
+// LiveChat script loaded
 const liveChatModerator = new YouTubeLiveChatModerator();
 liveChatModerator.init();

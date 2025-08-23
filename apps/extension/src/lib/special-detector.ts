@@ -8,7 +8,7 @@ export class SpecialCategoryDetector {
   /**
    * 特別カテゴリの検出メインエントリーポイント
    */
-  detect(text: string, author: string): DetectionResult {
+  detect(text: string, _author: string): DetectionResult {
     const normalized = this.normalizeText(text);
     
     // 不倫関連の検出

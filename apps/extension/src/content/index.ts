@@ -9,9 +9,9 @@ class YouTubeCommentModerator {
   private isProcessing = false;
 
   async init() {
-    console.log('[YCAB] YouTube comment moderator init called, URL:', window.location.href);
+    // Debug: YouTube comment moderator init
     await this.loadSettings();
-    console.log('[YCAB] Settings loaded:', this.settings);
+    // Debug: Settings loaded
     this.setupObserver();
     this.setupListeners();
     this.processExistingComments();
@@ -75,12 +75,12 @@ class YouTubeCommentModerator {
     for (const selector of selectors) {
       const element = document.querySelector(selector);
       if (element) {
-        console.log('[YCAB] Found comments container with selector:', selector, element);
+        // Debug: Found comments container
         return element as HTMLElement;
       }
     }
     
-    console.log('[YCAB] No comments container found');
+    // Debug: No comments container found
     return null;
   }
 
@@ -115,21 +115,21 @@ class YouTubeCommentModerator {
 
   private async processComment(element: HTMLElement) {
     if (!this.settings?.enabled) {
-      console.log('[YCAB] Settings disabled, skipping');
+      // Settings disabled, skip processing
       return;
     }
     if (unifiedDetector.isProcessed(element)) {
-      console.log('[YCAB] Comment already processed');
+      // Comment already processed
       return;
     }
 
     const comment = this.extractComment(element);
     if (!comment) {
-      console.log('[YCAB] Could not extract comment from element:', element);
+      // Could not extract comment
       return;
     }
 
-    console.log('[YCAB] Processing comment:', comment.text);
+    // Processing comment
     unifiedDetector.markProcessed(element);
 
     // NGユーザーチェック
@@ -151,19 +151,19 @@ class YouTubeCommentModerator {
     // 統一検出ロジック（アーカイブコメントとして処理）
     const result = unifiedDetector.detect(comment.text, comment.author, false);
 
-    console.log('[YCAB] Detection result:', result);
+    // Detection completed
 
     if (result.blocked && result.category) {
       const catSettings = this.settings?.categorySettings[result.category];
-      console.log('[YCAB] Category settings:', catSettings);
+      // Check category settings
       if (catSettings?.enabled) {
-        console.log('[YCAB] Applying action for category:', result.category);
+        // Applying filter action
         this.applyAction(element, [result.category]);
       } else {
-        console.log('[YCAB] Category disabled, not applying action');
+        // Category disabled
       }
     } else {
-      console.log('[YCAB] Comment not blocked');
+      // Comment passed filters
     }
   }
 
@@ -191,7 +191,7 @@ class YouTubeCommentModerator {
 
   private addClickToUnblur(element: HTMLElement) {
     // 既存のイベントリスナーを削除
-    const existingListener = (element as any)._ycabClickListener;
+    const existingListener = (element as HTMLElement & { _ycabClickListener?: EventListener })._ycabClickListener;
     if (existingListener) {
       element.removeEventListener('click', existingListener);
     }
@@ -227,7 +227,7 @@ class YouTubeCommentModerator {
     };
 
     element.addEventListener('click', clickListener);
-    (element as any)._ycabClickListener = clickListener;
+    (element as HTMLElement & { _ycabClickListener?: EventListener })._ycabClickListener = clickListener;
   }
 
   private getCategoryLabel(category: string): string {
@@ -246,7 +246,7 @@ class YouTubeCommentModerator {
     this.isProcessing = true;
     const commentElements = document.querySelectorAll('ytd-comment-thread-renderer, ytd-comment-renderer');
     
-    console.log('[YCAB] Processing existing comments, found:', commentElements.length);
+    // Processing existing comments
     
     commentElements.forEach((element) => {
       if (element instanceof HTMLElement) {
@@ -268,10 +268,10 @@ class YouTubeCommentModerator {
       if (overlay) overlay.remove();
       
       // イベントリスナーを削除
-      const existingListener = (element as any)._ycabClickListener;
+      const existingListener = (element as HTMLElement & { _ycabClickListener?: EventListener })._ycabClickListener;
       if (existingListener) {
         element.removeEventListener('click', existingListener);
-        delete (element as any)._ycabClickListener;
+        delete (element as HTMLElement & { _ycabClickListener?: EventListener })._ycabClickListener;
       }
     });
 
@@ -284,7 +284,7 @@ class YouTubeCommentModerator {
   }
 }
 
-console.log('[YCAB] YouTube AI Moderator Content script loaded!', window.location.href);
+// YouTube AI Moderator Content script loaded
 
 // 基本テスト削除
 
