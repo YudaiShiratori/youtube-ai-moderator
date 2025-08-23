@@ -1,0 +1,45 @@
+.ycab-hidden {
+  display: none !important;
+}
+
+.ycab-blurred {
+  position: relative;
+  overflow: hidden;
+}
+
+.ycab-blurred::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ycab-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: #ff4444;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: bold;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.ycab-blurred:hover::before {
+  opacity: 0.3;
+  transition: opacity 0.3s ease;
+}
+
+.ycab-blurred:hover .ycab-badge {
+  opacity: 0.5;
+  transition: opacity 0.3s ease;
+}

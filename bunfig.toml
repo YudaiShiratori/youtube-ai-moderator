@@ -1,0 +1,17 @@
+[install]
+# Enable workspaces
+workspaces = true
+
+# Use exact versions for reproducible installs
+exact = true
+
+# Cache settings
+cache = true
+globalCache = true
+
+[workspaces]
+# Define workspace packages
+packages = [
+  "apps/*",
+  "packages/*"
+]
