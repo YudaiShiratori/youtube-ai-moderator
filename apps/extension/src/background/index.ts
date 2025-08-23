@@ -4,9 +4,9 @@ import { DEFAULT_SETTINGS } from '../types';
 browser.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') {
     await browser.storage.local.set({ settings: DEFAULT_SETTINGS });
-    
-    const url = browser.runtime.getURL('src/options/index.html');
-    await browser.tabs.create({ url });
+
+    // Use standard API to open options page in MV3
+    await browser.runtime.openOptionsPage();
   }
 });
 
@@ -20,8 +20,8 @@ browser.action.onClicked.addListener(async () => {
 
 browser.runtime.onMessage.addListener((message, _sender) => {
   if (message.type === 'OPEN_OPTIONS') {
-    const url = browser.runtime.getURL('src/options/index.html');
-    browser.tabs.create({ url });
+    // Use standard API to open options page in MV3
+    browser.runtime.openOptionsPage();
   }
   
   return Promise.resolve();

@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube AI Moderator (dev)",
+  "version": "1.0.0",
+  "commands": {
+    "wxt:reload-extension": {
+      "description": "Reload the extension during development",
+      "suggested_key": {
+        "default": "Alt+R"
+      }
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "sandbox": {
+    "pages": [
+      "sandbox.html"
+    ]
+  },
+  "host_permissions": [
+    "http://localhost/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval' http://localhost:3001; object-src 'self';",
+    "sandbox": "script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:3001; sandbox allow-scripts allow-forms allow-popups allow-modals; child-src 'self';"
+  },
+  "permissions": [
+    "tabs",
+    "scripting"
+  ]
+}
