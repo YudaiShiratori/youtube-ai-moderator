@@ -1,5 +1,5 @@
 import browser from 'webextension-polyfill';
-import { detector } from '../lib/detector';
+import { unifiedDetector } from '../lib/unified-detector';
 import { storage } from '../lib/storage';
 import { Comment, Settings } from '../types';
 
@@ -9,22 +9,9 @@ class YouTubeCommentModerator {
   private isProcessing = false;
 
   async init() {
-    console.log('[YouTube AI Moderator] Initializing...');
-    // TEST: 全コメント強制ぼかし用のグローバルスタイルを注入（後で削除）
-    const styleId = 'ycab-test-global-style';
-    if (!document.getElementById(styleId)) {
-      const s = document.createElement('style');
-      s.id = styleId;
-      s.textContent = `
-        ytd-comment-thread-renderer, ytd-comment-renderer { position: relative !important; }
-        ytd-comment-thread-renderer #content,
-        ytd-comment-renderer #content,
-        #content-text { filter: blur(8px) brightness(0.5) !important; }
-      `;
-      document.head.appendChild(s);
-    }
+    console.log('[YCAB] YouTube comment moderator init called, URL:', window.location.href);
     await this.loadSettings();
-    console.log('[YouTube AI Moderator] Settings loaded:', this.settings);
+    console.log('[YCAB] Settings loaded:', this.settings);
     this.setupObserver();
     this.setupListeners();
     this.processExistingComments();
@@ -43,12 +30,12 @@ class YouTubeCommentModerator {
     });
 
     document.addEventListener('yt-navigate-finish', () => {
-      detector.reset();
+      unifiedDetector.reset();
       this.processExistingComments();
     });
 
     document.addEventListener('yt-navigate-start', () => {
-      detector.reset();
+      unifiedDetector.reset();
     });
   }
 
@@ -77,7 +64,24 @@ class YouTubeCommentModerator {
   }
 
   private findCommentsContainer(): HTMLElement | null {
-    return document.querySelector('#comments, ytd-comments, ytd-item-section-renderer#sections');
+    const selectors = [
+      '#comments',
+      'ytd-comments',
+      'ytd-item-section-renderer#sections',
+      '#contents',
+      '.ytd-item-section-renderer'
+    ];
+    
+    for (const selector of selectors) {
+      const element = document.querySelector(selector);
+      if (element) {
+        console.log('[YCAB] Found comments container with selector:', selector, element);
+        return element as HTMLElement;
+      }
+    }
+    
+    console.log('[YCAB] No comments container found');
+    return null;
   }
 
   private extractComment(element: HTMLElement): Comment | null {
@@ -110,33 +114,31 @@ class YouTubeCommentModerator {
   }
 
   private async processComment(element: HTMLElement) {
-    // TEST: 全コメントを強制的にぼかす（後で戻す）
-    try {
-      const commentRoot = element.closest('ytd-comment-thread-renderer, ytd-comment-renderer') as HTMLElement | null;
-      const target = commentRoot ?? element;
-      target.classList.remove('ycab-hidden', 'ycab-blurred');
-      target.classList.add('ycab-blurred');
-      const textEl = target.querySelector('#content, #content-text, .ytd-comment-renderer #content-text') as HTMLElement | null;
-      if (textEl) textEl.classList.add('ycab-blurred');
-    } catch (e) {
-      console.warn('blur failed', e);
+    if (!this.settings?.enabled) {
+      console.log('[YCAB] Settings disabled, skipping');
+      return;
     }
-    return;
-
-    if (!this.settings?.enabled) return;
-    if (detector.isProcessed(element)) return;
+    if (unifiedDetector.isProcessed(element)) {
+      console.log('[YCAB] Comment already processed');
+      return;
+    }
 
     const comment = this.extractComment(element);
-    if (!comment) return;
+    if (!comment) {
+      console.log('[YCAB] Could not extract comment from element:', element);
+      return;
+    }
 
-    console.log('[YouTube AI Moderator] Processing comment:', comment.text, 'by', comment.author);
-    detector.markProcessed(element);
+    console.log('[YCAB] Processing comment:', comment.text);
+    unifiedDetector.markProcessed(element);
 
+    // NGユーザーチェック
     if (this.settings.ngUsers.includes(comment.author)) {
       this.applyAction(element, ['nguser']);
       return;
     }
 
+    // NGキーワードチェック
     const hasNgKeyword = this.settings.ngKeywords.some(keyword => 
       comment.text.toLowerCase().includes(keyword.toLowerCase())
     );
@@ -146,55 +148,94 @@ class YouTubeCommentModerator {
       return;
     }
 
-    const result = detector.detect(
-      comment.text,
-      comment.author
-    );
-    console.log('[YouTube AI Moderator] Detection result:', result);
+    // 統一検出ロジック（アーカイブコメントとして処理）
+    const result = unifiedDetector.detect(comment.text, comment.author, false);
+
+    console.log('[YCAB] Detection result:', result);
 
     if (result.blocked && result.category) {
       const catSettings = this.settings?.categorySettings[result.category];
-      console.log('[YouTube AI Moderator] Category settings:', catSettings);
+      console.log('[YCAB] Category settings:', catSettings);
       if (catSettings?.enabled) {
-        console.log('[YouTube AI Moderator] Blocking comment:', result.category);
+        console.log('[YCAB] Applying action for category:', result.category);
         this.applyAction(element, [result.category]);
+      } else {
+        console.log('[YCAB] Category disabled, not applying action');
       }
+    } else {
+      console.log('[YCAB] Comment not blocked');
     }
   }
 
   private applyAction(element: HTMLElement, categories: string[]) {
     if (!this.settings) return;
 
-    element.classList.remove('ycab-hidden', 'ycab-blurred');
+    element.classList.remove('ycab-blurred', 'ycab-unblurred');
     
     const existingBadge = element.querySelector('.ycab-badge');
     if (existingBadge) {
       existingBadge.remove();
     }
 
-    if (this.settings.displayMode === 'hide') {
-      element.classList.add('ycab-hidden');
-    } else {
-      element.classList.add('ycab-blurred');
-    }
+    // 常にぼかしを適用
+    element.classList.add('ycab-blurred');
 
     const badge = document.createElement('span');
-    badge.className = 'ycab-badge';
+    badge.className = 'ycab-badge modkun-badge';
     badge.textContent = this.getCategoryLabel(categories[0]);
     element.appendChild(badge);
+
+    // クリックでぼかし解除機能を追加
+    this.addClickToUnblur(element);
+  }
+
+  private addClickToUnblur(element: HTMLElement) {
+    // 既存のイベントリスナーを削除
+    const existingListener = (element as any)._ycabClickListener;
+    if (existingListener) {
+      element.removeEventListener('click', existingListener);
+    }
+
+    // 元の文を保存
+    const comment = this.extractComment(element);
+    const originalText = comment ? comment.text : '';
+
+    const clickListener = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const existingOverlay = element.querySelector('.ycab-test-overlay');
+      
+      if (element.classList.contains('ycab-blurred')) {
+        // テスト用オーバーレイを表示
+        if (!existingOverlay) {
+          const overlay = document.createElement('div');
+          overlay.className = 'ycab-test-overlay';
+          overlay.textContent = originalText || 'テキストが取得できませんでした';
+          element.appendChild(overlay);
+        }
+        element.classList.remove('ycab-blurred');
+        element.classList.add('ycab-unblurred');
+      } else {
+        // オーバーレイを削除
+        if (existingOverlay) {
+          existingOverlay.remove();
+        }
+        element.classList.remove('ycab-unblurred');
+        element.classList.add('ycab-blurred');
+      }
+    };
+
+    element.addEventListener('click', clickListener);
+    (element as any)._ycabClickListener = clickListener;
   }
 
   private getCategoryLabel(category: string): string {
     const labels: Record<string, string> = {
-      harassment: '攻撃',
       spoiler: 'ネタバレ',
-      recruiting: '勧誘',
-      repeat: '連投',
-      impersonation: 'なりすまし',
-      noise: 'ノイズ',
-      nioase: '匂わせ',
-      hint: 'ライブ匂わせ',
-      strongTone: 'ライブ語気強',
+      hint: '匂わせ',
+      hato: '鳩行為',
+      backseat: '指示厨',
       nguser: 'NGユーザー',
       ngkeyword: 'NGワード',
     };
@@ -204,6 +245,8 @@ class YouTubeCommentModerator {
   private processExistingComments() {
     this.isProcessing = true;
     const commentElements = document.querySelectorAll('ytd-comment-thread-renderer, ytd-comment-renderer');
+    
+    console.log('[YCAB] Processing existing comments, found:', commentElements.length);
     
     commentElements.forEach((element) => {
       if (element instanceof HTMLElement) {
@@ -215,13 +258,24 @@ class YouTubeCommentModerator {
   }
 
   private reprocessAllComments() {
-    document.querySelectorAll('.ycab-hidden, .ycab-blurred').forEach((element) => {
-      element.classList.remove('ycab-hidden', 'ycab-blurred');
+    document.querySelectorAll('.ycab-blurred, .ycab-unblurred').forEach((element) => {
+      element.classList.remove('ycab-blurred', 'ycab-unblurred');
       const badge = element.querySelector('.ycab-badge');
       if (badge) badge.remove();
+      
+      // テストオーバーレイを削除
+      const overlay = element.querySelector('.ycab-test-overlay');
+      if (overlay) overlay.remove();
+      
+      // イベントリスナーを削除
+      const existingListener = (element as any)._ycabClickListener;
+      if (existingListener) {
+        element.removeEventListener('click', existingListener);
+        delete (element as any)._ycabClickListener;
+      }
     });
 
-    detector.reset();
+    unifiedDetector.reset();
     this.processExistingComments();
   }
 
@@ -230,6 +284,9 @@ class YouTubeCommentModerator {
   }
 }
 
-console.log('[YouTube AI Moderator] Content script loaded!');
+console.log('[YCAB] YouTube AI Moderator Content script loaded!', window.location.href);
+
+// 基本テスト削除
+
 const moderator = new YouTubeCommentModerator();
 moderator.init();

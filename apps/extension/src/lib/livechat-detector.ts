@@ -1,27 +1,26 @@
-import { DetectionResult } from '../types';
+import { DetectionResult, Category } from '../types';
 
 /**
- * YouTube AI Moderator v5 - ライブチャット専用厳格検出ロジック
- * 1ヒット即ブロック、草/w/ｗ単独は常に許可
+ * YouTube AI Moderator v6 - 新仕様による厳格検出ロジック
+ * 文の意味による判定：spoiler, hint, hato, backseat
  */
 
-class LiveChatStrictDetector {
+class NewLiveChatDetector {
   private processedComments = new WeakSet<HTMLElement>();
-  private authorCounts = new Map<string, Map<string, number>>();
-  private urlCounts = new Map<string, number>();
+  private recentMessages = new Map<string, { timestamp: number; count: number }>();
   private lastReset = Date.now();
 
   /**
-   * A. 強化された正規化と難読化解除
+   * 共通前処理：正規化と文構造解析
    */
   private normalizeText(text: string): string {
-    // 1. Unicode NFKC正規化
+    // Unicode NFKC正規化
     let normalized = text.normalize('NFKC');
     
-    // 2. ゼロ幅・方向制御文字削除
+    // ゼロ幅・結合文字削除
     normalized = normalized.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
     
-    // 3. confusables/リート置換フォールド（強化版）
+    // confusables/全角英数の正規化
     const charMap: Record<string, string> = {
       // キリル文字
       'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y', 'т': 't',
@@ -33,13 +32,6 @@ class LiveChatStrictDetector {
       'ｙ': 'y', 'ｚ': 'z',
       '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
       '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-      // リート文字
-      '0': 'o', '3': 'e', '4': 'a', '5': 's', '7': 't',
-      // 装飾文字
-      'ⓐ': 'a', 'ⓑ': 'b', 'ⓒ': 'c', 'ⓓ': 'd', 'ⓔ': 'e',
-      'ⓕ': 'f', 'ⓖ': 'g', 'ⓗ': 'h', 'ⓘ': 'i', 'ⓙ': 'j',
-      // カタカナ（一部）
-      'テ': 'て', 'レ': 'れ', 'グ': 'ぐ', 'ラ': 'ら', 'ム': 'む',
     };
     
     for (const [from, to] of Object.entries(charMap)) {
@@ -50,389 +42,234 @@ class LiveChatStrictDetector {
   }
 
   /**
-   * 4. 強化された骨格（skeleton）抽出
-   * 語中の中点・記号・絵文字・スペース・ドット・ゼロ幅を最大2連まで無視して連結
-   * 例: "t.e-l e g r a m" → "telegram"
-   */
-  private extractSkeleton(text: string): string {
-    // スペース/記号/絵文字/中点等を削除して骨格抽出（強化版）
-    return text.replace(/[\s\-_\.\u30FB\u2022\u2023\u25CF\u25CB\u25A0\u25A1\u00B7\u2027]{1,2}/g, '')
-               .replace(/[\u{1F300}-\u{1F5FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}]{1,2}/gu, '');
-  }
-
-  /**
-   * 5. 強化された長音/笑い処理
-   */
-  private compressRepeats(text: string): string {
-    // 長音圧縮
-    text = text.replace(/ー{2,}/g, 'ー');
-    text = text.replace(/[——]{2,}/g, '——');
-    
-    // 笑い文字は単独なら無視フラグを付ける（強化版）
-    if (/^[wｗ草笑ｗw]*$/.test(text.replace(/[\s\u3000]/g, ''))) {
-      return ''; // 笑いのみは空にして除外
-    }
-    
-    return text;
-  }
-
-  /**
-   * B. 1ヒット即ブロックの厳格判定（ライブチャット専用）
+   * メイン検出エントリーポイント
    */
   detect(text: string, author: string): DetectionResult {
     this.checkAndReset();
     
-    // 正規化処理
-    const original = text;
     const normalized = this.normalizeText(text);
-    const compressed = this.compressRepeats(normalized);
-    const skeleton = this.extractSkeleton(compressed);
     
-    // 笑いのみは通す
-    if (!compressed) {
+    // 笑い単独は通す
+    if (/^[wｗw草笑]*$/.test(normalized.replace(/[\s\u3000]/g, ''))) {
       return { blocked: false, category: null, reason: '' };
     }
 
-    // 1. 直接攻撃（Harassment-Directed）
-    const harassmentResult = this.checkDirectHarassment(normalized, skeleton);
-    if (harassmentResult.blocked) return harassmentResult;
-
-    // 2. 露骨なネタバレ（Spoiler-Concrete）
-    const spoilerResult = this.checkConcreteSpoiler(normalized, skeleton);
+    // 1. ネタバレ検出（最重要）
+    const spoilerResult = this.detectSpoiler(normalized);
     if (spoilerResult.blocked) return spoilerResult;
 
-    // 3. 勧誘・連絡誘導・短縮URL（Recruiting-Link）
-    const recruitingResult = this.checkRecruiting(normalized, skeleton, original);
-    if (recruitingResult.blocked) return recruitingResult;
-
-    // 4. 連投スパム（Repeat-Spam）
-    const repeatResult = this.checkRepeatSpam(skeleton, author, original);
-    if (repeatResult.blocked) return repeatResult;
-
-    // 5. なりすまし（Impersonation-Official）
-    const impersonationResult = this.checkImpersonation(normalized, skeleton);
-    if (impersonationResult.blocked) return impersonationResult;
-
-    // 6. 絵文字壁・ノイズ（Emoji/Noise Wall）
-    const noiseResult = this.checkNoise(original, normalized);
-    if (noiseResult.blocked) return noiseResult;
-
-    // 7. 匂わせ（Hints）- ライブ用新規追加
-    const hintResult = this.checkHints(normalized, skeleton);
+    // 2. 匂わせ検出
+    const hintResult = this.detectHint(normalized);
     if (hintResult.blocked) return hintResult;
 
-    // 8. 語気強（Strong Tone）- ライブ用新規追加
-    const strongToneResult = this.checkStrongTone(normalized, original);
-    if (strongToneResult.blocked) return strongToneResult;
+    // 3. 鳩行為検出
+    const hatoResult = this.detectHato(normalized);
+    if (hatoResult.blocked) return hatoResult;
+
+    // 4. 指示厨検出
+    const backseatResult = this.detectBackseat(normalized, author);
+    if (backseatResult.blocked) return backseatResult;
 
     return { blocked: false, category: null, reason: '' };
   }
 
-  private checkDirectHarassment(normalized: string, _skeleton: string): DetectionResult {
-    const insults = [
-      '死ね', '消えろ', '黙れ', 'ゴミ', 'クズ', '最悪', '頭おかし', 'きもい', 'きしょい',
-      'うざい', 'むかつく', 'ブス', 'ブサイク', 'デブ', 'ハゲ', '馬鹿', 'バカ', 'あほ',
-      'アホ', 'カス', 'しね', 'きえろ', 'だまれ'
-    ];
-    
+  /**
+   * 3.1 ネタバレ検出（命題性チェック）
+   */
+  private detectSpoiler(text: string): DetectionResult {
+    let score = 0;
+    const reasons: string[] = [];
+
+    // A1. 対象の特定 (+2)
     const targets = [
-      'お前', 'おまえ', 'てめえ', 'てめぇ', 'お前ら', 'おまえら', '配信者', '実況者',
-      '管理人', '運営', '@', 'you ', 'your '
+      '主人公', '師匠', 'ボス', 'ラスボス', '犯人', '黒幕', '正体', 
+      'キャラ', 'チーム', '敵', '味方', 'プレイヤー'
     ];
+    const targetFound = targets.some(target => text.includes(target));
+    if (targetFound) {
+      score += 2;
+      reasons.push('対象特定');
+    }
+
+    // 固有名詞パターン（カタカナ3文字以上）
+    if (/[ア-ヴ]{3,}/.test(text)) {
+      score += 2;
+      reasons.push('固有名詞');
+    }
+
+    // A2. 出来事の明示 (+2)
+    const events = [
+      '死ぬ', '死んだ', '死亡', '殺される', '裏切る', '裏切った',
+      '勝つ', '負ける', '優勝', '敗北', '復活', '登場', '離脱',
+      'クリア', 'ゲームオーバー', '倒す', '倒した', '攻略'
+    ];
+    const eventFound = events.some(event => text.includes(event));
+    if (eventFound) {
+      score += 2;
+      reasons.push('事象明示');
+    }
+
+    // 英語の出来事
+    const englishEvents = ['dies', 'death', 'killed', 'betrays', 'wins', 'loses'];
+    const englishEventFound = englishEvents.some(event => text.includes(event));
+    if (englishEventFound) {
+      score += 2;
+      reasons.push('英語事象');
+    }
+
+    // A3. 関係/同一性の明示 (+2)
+    const identityPatterns = [
+      /(.+)は(.+)/, /(.+)が(.+)/, /(.+)＝(.+)/, 
+      /正体は/, /犯人は/, /黒幕は/, /ラスボスは/
+    ];
+    const identityFound = identityPatterns.some(pattern => pattern.test(text));
+    if (identityFound) {
+      score += 3; // 同一性は重要なので+3
+      reasons.push('同一性命題');
+    }
+
+    // A4. 時点の特定 (+1)
+    const timePatterns = [
+      /\d{1,2}:\d{2}/, /第\d+話/, /\d+章/, /\d+面/, /ステージ\d+/,
+      /episode\s*\d+/i, /ep\s*\d+/i, /s\d+e\d+/i
+    ];
+    const timeFound = timePatterns.some(pattern => pattern.test(text));
+    if (timeFound) {
+      score += 1;
+      reasons.push('時点特定');
+    }
+
+    // A5. 情報源の確度 (+1)
+    const certaintyTerms = ['確定', '公式', '確実', 'ネタバレ注意', '確認済み'];
+    const certaintyFound = certaintyTerms.some(term => text.includes(term));
+    if (certaintyFound) {
+      score += 1;
+      reasons.push('高確度');
+    }
+
+    // B) 確定性調整（減点）
+    const uncertaintyTerms = ['かもしれない', 'かも', 'っぽい', '予想', '考察', 'たぶん', 'maybe', 'probably'];
+    let uncertaintyCount = 0;
+    uncertaintyTerms.forEach(term => {
+      if (text.includes(term)) uncertaintyCount++;
+    });
+    score -= uncertaintyCount;
+    if (uncertaintyCount > 0) {
+      reasons.push(`推量表現-${uncertaintyCount}`);
+    }
+
+    // 否定チェック
+    const negationTerms = ['ネタバレしない', 'ネタバレなし', 'ネタバレ禁止'];
+    const hasNegation = negationTerms.some(term => text.includes(term));
+    if (hasNegation) {
+      return { blocked: false, category: null, reason: 'ネタバレ否定' };
+    }
+
+    // スコア判定
+    if (score >= 5) {
+      return { blocked: true, category: 'spoiler' as Category, reason: reasons.join(', ') };
+    }
     
-    const commands = [
-      'しろ', 'やれ', '謝れ', '責任取れ', '二度と来るな', '許さない', '出て', '帰れ'
-    ];
-
-    // 侮辱語 ∧ 対象指示
-    for (const insult of insults) {
-      if (normalized.includes(insult)) {
-        for (const target of targets) {
-          if (normalized.includes(target)) {
-            return { blocked: true, category: 'harassment', reason: `侮辱語「${insult}」+ 対象指示「${target}」` };
-          }
-        }
-      }
-    }
-
-    // 侮辱語 ∧ 命令/断定
-    for (const insult of insults) {
-      if (normalized.includes(insult)) {
-        for (const command of commands) {
-          if (normalized.includes(command)) {
-            return { blocked: true, category: 'harassment', reason: `侮辱語「${insult}」+ 命令「${command}」` };
-          }
-        }
-      }
-    }
-
-    // 危害の示唆
-    const threats = ['ぶっころ', 'ぶっ殺', '殺す', 'kill you', 'murder'];
-    for (const threat of threats) {
-      if (normalized.includes(threat)) {
-        return { blocked: true, category: 'harassment', reason: `危害示唆「${threat}」` };
-      }
-    }
-
     return { blocked: false, category: null, reason: '' };
   }
 
-  private checkConcreteSpoiler(normalized: string, _skeleton: string): DetectionResult {
-    const coreTerms = [
-      '犯人', '黒幕', '正体', '死亡', '死ぬ', '死んだ', '最終回', '結末', '真相', 
-      'ラスボス', 'ネタバレ', 'ending', 'finale', 'spoiler', 'dies', 'death'
-    ];
-    
-    const specificTerms = /第\d+話|S\d+E\d+|EP\d+|\d{1,2}:\d{2}/i;
-    
-    // 核心語の単独での断定表現（安心最優先）
-    const directSpoilers = ['犯人は', '黒幕は', '死ぬ', '死んだ', 'dies'];
-    for (const spoiler of directSpoilers) {
-      if (normalized.includes(spoiler)) {
-        return { blocked: true, category: 'spoiler', reason: `直接ネタバレ「${spoiler}」` };
-      }
-    }
-
-    // 核心語 ∧ 具体性
-    for (const core of coreTerms) {
-      if (normalized.includes(core)) {
-        if (specificTerms.test(normalized)) {
-          return { blocked: true, category: 'spoiler', reason: `具体的ネタバレ「${core}」+ 具体性` };
-        }
-      }
-    }
-
-    return { blocked: false, category: null, reason: '' };
-  }
-
-  private checkRecruiting(normalized: string, skeleton: string, original: string): DetectionResult {
-    const cta = [
-      'クリック', '登録', '連絡', 'dm', 'contact', 'text me', '見て', 'みて', 'check'
-    ];
-    
-    const services = [
-      'telegram', 'whatsapp', 'discord', 'line', '@', 'gmail', 'yahoo', 'hotmail'
-    ];
-    
-    const moneyTerms = [
-      '副業', '高収入', '日給', '投資', '稼げ', '儲かる', 'money', 'earn', 'profit'
+  /**
+   * 3.2 匂わせ検出
+   */
+  private detectHint(text: string): DetectionResult {
+    const hintTerms = [
+      'このあと', '次が', '来るぞ', 'くるぞ', 'ここが伏線', '準備して',
+      '某', 'イニシャル', '◯◯', '○○', '〇〇', 'あの人', '例の人',
+      '情報筋', 'リーク', '確報', '内部情報', '関係者'
     ];
 
-    // CTA ∧ 連絡先/サービス
-    for (const c of cta) {
-      if (normalized.includes(c)) {
-        for (const service of services) {
-          if (normalized.includes(service) || skeleton.includes(service)) {
-            return { blocked: true, category: 'recruiting', reason: `CTA「${c}」+ サービス「${service}」` };
-          }
-        }
+    const hintFound = hintTerms.some(term => text.includes(term));
+    if (hintFound) {
+      // 時系列語との組み合わせチェック
+      const timeTerms = ['次回', '来週', '今夜', 'この後', '今度', '後で'];
+      const hasTimeRef = timeTerms.some(term => text.includes(term));
+      
+      if (hasTimeRef) {
+        return { blocked: true, category: 'hint' as Category, reason: '匂わせ+時系列' };
       }
-    }
-
-    // URL数をカウント
-    const urlMatches = original.match(/https?:\/\/[^\s]+/g) || [];
-    if (urlMatches.length >= 2) {
-      return { blocked: true, category: 'recruiting', reason: `複数URL（${urlMatches.length}本）` };
-    }
-
-    // 短縮/誘導ドメイン
-    const shortDomains = /bit\.ly|linktr\.ee|tinyurl\.com|t\.co|lin\.ee|t\.me/i;
-    if (shortDomains.test(original)) {
-      for (const cword of [...cta, ...moneyTerms]) {
-        if (normalized.includes(cword)) {
-          return { blocked: true, category: 'recruiting', reason: `短縮URL + 勧誘語「${cword}」` };
-        }
-      }
-    }
-
-    // 変形URL検出
-    const obfuscatedUrls = ['hxxps', 't[.]me', 'lin[.]ee', 'd i s c o r d', 'ｗｈａｔｓａｐｐ'];
-    for (const obf of obfuscatedUrls) {
-      if (skeleton.includes(obf.replace(/[\[\]\s\.]/g, ''))) {
-        return { blocked: true, category: 'recruiting', reason: `変形URL「${obf}」` };
-      }
-    }
-
-    return { blocked: false, category: null, reason: '' };
-  }
-
-  private checkRepeatSpam(skeleton: string, author: string, original: string): DetectionResult {
-    const textHash = this.createHash(skeleton);
-    
-    // 著者の投稿履歴を取得/初期化
-    if (!this.authorCounts.has(author)) {
-      this.authorCounts.set(author, new Map());
-    }
-    const authorTexts = this.authorCounts.get(author)!;
-    
-    // 同一/類似本文のカウント
-    const currentCount = authorTexts.get(textHash) || 0;
-    authorTexts.set(textHash, currentCount + 1);
-    
-    if (currentCount >= 1) { // 2回目以降
-      return { blocked: true, category: 'repeat', reason: `同一内容の再投稿（${currentCount + 1}回目）` };
-    }
-
-    // URL再投稿チェック
-    const urls = original.match(/https?:\/\/[^\s]+/g) || [];
-    for (const url of urls) {
-      const urlCount = this.urlCounts.get(url) || 0;
-      this.urlCounts.set(url, urlCount + 1);
-      if (urlCount >= 1) {
-        return { blocked: true, category: 'repeat', reason: `同一URL再投稿` };
-      }
-    }
-
-    // チェーン誘導
-    const chainTerms = ['このコメントをコピペ', 'コピペして', '拡散希望', '拡散して'];
-    for (const chain of chainTerms) {
-      if (skeleton.includes(chain.replace(/\s/g, ''))) {
-        return { blocked: true, category: 'repeat', reason: `チェーン誘導「${chain}」` };
-      }
-    }
-
-    return { blocked: false, category: null, reason: '' };
-  }
-
-  private checkImpersonation(normalized: string, _skeleton: string): DetectionResult {
-    const officialTerms = ['公式', '運営', 'サポート', 'official', 'support', '管理者'];
-    const contactTerms = ['連絡', 'line', 'discord', 'メール', 'dm', 'contact'];
-    
-    for (const official of officialTerms) {
-      if (normalized.includes(official)) {
-        // 近傍12文字以内での連絡誘導チェック
-        const officialIndex = normalized.indexOf(official);
-        const nearbyText = normalized.substring(
-          Math.max(0, officialIndex - 12), 
-          officialIndex + official.length + 12
-        );
-        
-        for (const contact of contactTerms) {
-          if (nearbyText.includes(contact)) {
-            return { blocked: true, category: 'impersonation', reason: `なりすまし「${official}」+ 連絡誘導` };
-          }
-        }
-      }
-    }
-
-    return { blocked: false, category: null, reason: '' };
-  }
-
-  private checkNoise(original: string, _normalized: string): DetectionResult {
-    // 絵文字のカウント
-    const emojiCount = (original.match(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu) || []).length;
-    const totalLength = original.length;
-    
-    if (emojiCount >= 7) {
-      return { blocked: true, category: 'noise', reason: `絵文字壁（${emojiCount}個）` };
-    }
-    
-    if (totalLength > 0 && (emojiCount / totalLength) > 0.8) {
-      return { blocked: true, category: 'noise', reason: `絵文字率80%超（${emojiCount}/${totalLength}）` };
-    }
-
-    // 長音/記号/大文字の極端な壁
-    if (/ー{12,}/.test(original)) {
-      return { blocked: true, category: 'noise', reason: '長音壁' };
-    }
-    
-    if (/[!！?？]{10,}/.test(original)) {
-      return { blocked: true, category: 'noise', reason: '記号壁' };
-    }
-    
-    if (/[A-Z]{12,}/.test(original)) {
-      return { blocked: true, category: 'noise', reason: '大文字壁' };
+      
+      // 単独でも保留レベル
+      return { blocked: true, category: 'hint' as Category, reason: '匂わせ表現' };
     }
 
     return { blocked: false, category: null, reason: '' };
   }
 
   /**
-   * 新規: 匂わせ（Hints）検出 - ライブチャット専用
+   * 3.3 鳩行為検出
    */
-  private checkHints(normalized: string, _skeleton: string): DetectionResult {
-    // パターン群A（直接示唆）
-    const directHintTerms = [
-      'く、くる', 'くるぞ', '来るぞ', '来るらしい', '来週くる', '次回くる',
-      '確定', '確実', 'ほぼ確', '情報筋', 'リーク', '確報'
+  private detectHato(text: string): DetectionResult {
+    // 他枠参照
+    const otherStreamRefs = [
+      '他の枠', '向こうの配信', 'あっちの配信', '別の配信', '他の配信者',
+      '他のチャンネル', 'あのチャンネル'
     ];
     
-    // パターン群B（伏せ字・仄めかし）
-    const impliedTerms = [
-      '某', 'イニシャル', '◯◯', '○○', '〇〇', '※名前は伏せる', 'あの人', '例の人'
+    const hasOtherStreamRef = otherStreamRefs.some(ref => text.includes(ref));
+    
+    // 伝達動詞
+    const communicationVerbs = [
+      '言ってた', '言ってる', '話してた', '話してる', '伝えて', '報告して',
+      'から来た', 'で見た', 'で聞いた', 'って言ってた'
     ];
     
-    // 時系列語
-    const timeTerms = ['次回', '来週', '今夜', 'この後', '今度', '後で'];
+    const hasCommunicationVerb = communicationVerbs.some(verb => text.includes(verb));
     
-    // 固有名/役名らしき連続カタカナ3文字以上
-    const katakanaPattern = /[ア-ヴ]{3,}/;
-
-    // パターン群A（直接示唆）の単独チェック
-    for (const hint of directHintTerms) {
-      if (normalized.includes(hint)) {
-        return { blocked: true, category: 'hint', reason: `直接示唆「${hint}」` };
-      }
+    if (hasOtherStreamRef && hasCommunicationVerb) {
+      return { blocked: true, category: 'hato' as Category, reason: '他枠参照+伝達動詞' };
     }
-
-    // パターン群B（伏せ字・仄めかし）+ 併存条件チェック
-    for (const implied of impliedTerms) {
-      if (normalized.includes(implied)) {
-        // 固有名らしきカタカナ または 時系列語 の併存チェック
-        if (katakanaPattern.test(normalized)) {
-          return { blocked: true, category: 'hint', reason: `伏せ字「${implied}」+ カタカナ固有名` };
-        }
-        for (const time of timeTerms) {
-          if (normalized.includes(time)) {
-            return { blocked: true, category: 'hint', reason: `伏せ字「${implied}」+ 時系列「${time}」` };
-          }
-        }
-      }
-    }
-
+    
     return { blocked: false, category: null, reason: '' };
   }
 
   /**
-   * 新規: 語気強（Strong Tone）検出 - ライブチャット専用
+   * 3.4 指示厨検出
    */
-  private checkStrongTone(normalized: string, original: string): DetectionResult {
-    // 1. 命令/断定語
-    const commandTerms = [
-      'しろ', 'やれ', '黙れ', '謝れ', '責任取れ', '許さない', '二度と来るな'
+  private detectBackseat(text: string, author: string): DetectionResult {
+    // 命令表現
+    const commandPatterns = [
+      /(.+)しろ$/, /(.+)して$/, /(.+)しな$/, /(.+)ろ$/,
+      /^(.+)しろ/, /^(.+)して/, /^(.+)しな/, /^(.+)ろ/
     ];
     
-    for (const command of commandTerms) {
-      if (normalized.includes(command)) {
-        return { blocked: true, category: 'strongTone', reason: `強い命令「${command}」` };
+    const hasCommand = commandPatterns.some(pattern => pattern.test(text));
+    
+    // 操作/攻略語彙
+    const gameplayTerms = [
+      '進め', '戻れ', 'ジャンプ', '回避', '装備', '倒せ', '買え', '売れ',
+      '地図見ろ', 'マップ', 'アイテム', 'スキル', 'レベル上げ', 'セーブ'
+    ];
+    
+    const hasGameplayTerm = gameplayTerms.some(term => text.includes(term));
+    
+    if (hasCommand && hasGameplayTerm) {
+      // 連投チェック
+      const messageKey = this.createHash(text);
+      const now = Date.now();
+      const recent = this.recentMessages.get(`${author}:${messageKey}`);
+      
+      if (recent && (now - recent.timestamp) < 30000) {
+        recent.count++;
+        if (recent.count >= 2) {
+          return { blocked: true, category: 'backseat' as Category, reason: '命令+操作語+連投' };
+        }
+      } else {
+        this.recentMessages.set(`${author}:${messageKey}`, { timestamp: now, count: 1 });
       }
-    }
-
-    // 2. 記号の壁
-    if (/[!！?？]{6,}/.test(original)) {
-      return { blocked: true, category: 'strongTone', reason: '記号壁（感嘆符・疑問符）' };
+      
+      return { blocked: true, category: 'backseat' as Category, reason: '命令+操作語' };
     }
     
-    if (/ー{12,}/.test(original)) {
-      return { blocked: true, category: 'strongTone', reason: '長音壁' };
+    // 例外：質問形式
+    if (/どうやって|どうしたら|？/.test(text)) {
+      return { blocked: false, category: null, reason: '質問形式' };
     }
     
-    if (/[A-Z]{12,}/.test(original)) {
-      return { blocked: true, category: 'strongTone', reason: '大文字壁' };
-    }
-
-    // 3. 絵文字壁（7個以上 または 80%以上）
-    const emojiCount = (original.match(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu) || []).length;
-    const totalLength = original.length;
-    
-    if (emojiCount >= 7) {
-      return { blocked: true, category: 'strongTone', reason: `絵文字壁（${emojiCount}個）` };
-    }
-    
-    if (totalLength > 0 && (emojiCount / totalLength) > 0.8) {
-      return { blocked: true, category: 'strongTone', reason: `絵文字率80%超（${emojiCount}/${totalLength}）` };
-    }
-
     return { blocked: false, category: null, reason: '' };
   }
 
@@ -449,8 +286,7 @@ class LiveChatStrictDetector {
   private checkAndReset(): void {
     const now = Date.now();
     if (now - this.lastReset > 60000) { // 60秒でリセット
-      this.authorCounts.clear();
-      this.urlCounts.clear();
+      this.recentMessages.clear();
       this.lastReset = now;
     }
   }
@@ -464,10 +300,9 @@ class LiveChatStrictDetector {
   }
 
   reset(): void {
-    this.authorCounts.clear();
-    this.urlCounts.clear();
+    this.recentMessages.clear();
     this.lastReset = Date.now();
   }
 }
 
-export const liveChatDetector = new LiveChatStrictDetector();
+export const liveChatDetector = new NewLiveChatDetector();

@@ -1,6 +1,6 @@
-export type Category = 'harassment' | 'spoiler' | 'recruiting' | 'repeat' | 'impersonation' | 'noise' | 'nioase' | 'hint' | 'strongTone';
+export type Category = 'spoiler' | 'hint' | 'hato' | 'backseat';
 
-export type DisplayMode = 'hide' | 'blur';
+export type DisplayMode = 'blur';
 
 export interface DetectionResult {
   blocked: boolean;
@@ -27,18 +27,13 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
-  displayMode: 'blur',  // テスト用にblurに変更
+  displayMode: 'blur',
   ngKeywords: [],
   ngUsers: [],
   categorySettings: {
-    harassment: { enabled: true },
     spoiler: { enabled: true },
-    recruiting: { enabled: true },
-    repeat: { enabled: true },
-    impersonation: { enabled: true },
-    noise: { enabled: true },
-    nioase: { enabled: true },
     hint: { enabled: true },
-    strongTone: { enabled: true },
+    hato: { enabled: true },
+    backseat: { enabled: true },
   },
 };

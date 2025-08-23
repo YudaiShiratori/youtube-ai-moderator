@@ -1,7 +1,3 @@
-.ycab-hidden {
-  display: none !important;
-}
-
 .ycab-blurred {
   position: relative;
   overflow: hidden;
@@ -18,6 +14,34 @@
   backdrop-filter: blur(8px);
   z-index: 9999;
   pointer-events: none;
+  cursor: pointer;
+}
+
+.ycab-blurred {
+  cursor: pointer;
+}
+
+.ycab-unblurred::before {
+  display: none !important;
+}
+
+.ycab-test-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.98);
+  color: #333;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  z-index: 10002;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  word-wrap: break-word;
+  overflow-y: auto;
+  backdrop-filter: none;
 }
 
 .ycab-badge {
@@ -30,16 +54,11 @@
   border-radius: 4px;
   font-size: 11px;
   font-weight: bold;
-  z-index: 2;
+  z-index: 10000;
   pointer-events: none;
 }
 
-.ycab-blurred:hover::before {
-  opacity: 0.3;
-  transition: opacity 0.3s ease;
-}
-
-.ycab-blurred:hover .ycab-badge {
-  opacity: 0.5;
-  transition: opacity 0.3s ease;
+.ycab-unblurred .ycab-badge {
+  background: #888;
+  text-decoration: line-through;
 }
