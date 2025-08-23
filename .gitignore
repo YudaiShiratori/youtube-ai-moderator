@@ -42,3 +42,11 @@ next-env.d.ts
 # Editor
 .vscode
 .idea
+
+# WXT build outputs
+apps/extension/.output/
+apps/extension/dev/
+apps/extension/.wxt/
+
+# Serena MCP
+.serena/
